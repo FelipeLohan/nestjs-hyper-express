@@ -42,4 +42,38 @@ describe('Lifecycle (e2e)', () => {
 
     await app.close();
   });
+
+  it('close() is idempotent — calling it twice does not throw', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [EmptyModule],
+    }).compile();
+
+    const app: INestApplication = moduleRef.createNestApplication(
+      new HyperExpressAdapter(),
+    );
+    await app.init();
+    await app.listen(0);
+
+    await app.close();
+    await expect(app.close()).resolves.not.toThrow();
+  });
+
+  it('runs several independent apps through listen()/close() in sequence without port conflicts', async () => {
+    for (let i = 0; i < 3; i++) {
+      const moduleRef = await Test.createTestingModule({
+        imports: [EmptyModule],
+      }).compile();
+
+      const app: INestApplication = moduleRef.createNestApplication(
+        new HyperExpressAdapter(),
+      );
+      await app.init();
+      await app.listen(0);
+
+      const instance = app.getHttpAdapter().getInstance() as Server;
+      expect(instance.port).toBeGreaterThan(0);
+
+      await app.close();
+    }
+  });
 });

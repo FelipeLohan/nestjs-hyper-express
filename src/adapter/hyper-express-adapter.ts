@@ -331,10 +331,19 @@ export class HyperExpressAdapter extends AbstractHttpAdapter<
     return notImplemented('enableCors', 'Fase 3 (ver PLAN.md §6.7)');
   }
 
+  /**
+   * hyper-express's `use(path, middleware)` scopes by path prefix only —
+   * there is no per-HTTP-method middleware scoping like Express routers
+   * offer. Module middleware bound to a specific method
+   * (`consumer.apply(mw).forRoutes({ path, method: RequestMethod.GET })`)
+   * therefore runs for every method under that path prefix, not just the
+   * requested one. Documented limitation — see PLAN.md §5.4/§8.
+   */
   public createMiddlewareFactory(
     _requestMethod: RequestMethod,
   ): (path: string, callback: Function) => unknown {
-    return notImplemented('createMiddlewareFactory', 'Fase 2 (ver PLAN.md §5.4)');
+    return (path: string, callback: Function) =>
+      this.use(path, callback as HyperExpress.MiddlewareHandler);
   }
 
   public getType(): string {

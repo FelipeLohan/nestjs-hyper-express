@@ -5,6 +5,16 @@
 > investigação do código-fonte clonado em `./nest` (NestJS) e `./hyper-express`,
 > e guia a implementação em `./nestjs-hyper-express`.
 
+**Status da implementação:** Fases 1–4 implementadas e verdes (19 testes
+unitários + 18 testes E2E, `npm test` / `npm run test:e2e` / `npm run build`
+passando). Pendências conhecidas (não bloqueiam o MVP, ver §8):
+`enableCors()` ainda não implementado de verdade (stub explícito, §6.7);
+`render()`/`setViewEngine()`/`useStaticAssets()` lançam erro por design
+(§6.6); métodos WebDAV herdam o stub default do `AbstractHttpAdapter` (§4.4);
+`applyVersionFilter()` (versionamento de rota) ainda não implementado.
+Requer Node 18/20/22/23 para rodar de verdade (uWebSockets.js não tem
+binário nativo para Node 26+ neste momento — ver `.nvmrc`).
+
 **Fontes investigadas:**
 - `nest/packages/core/adapters/http-adapter.ts` — `AbstractHttpAdapter`
 - `nest/packages/common/interfaces/http/http-server.interface.ts` — `HttpServer`

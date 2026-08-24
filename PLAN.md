@@ -16,8 +16,8 @@
 - `hyper-express/types/components/http/Response.d.ts` — `Response`
 - `hyper-express/types/components/middleware/MiddlewareHandler.d.ts` / `MiddlewareNext.d.ts`
 
-> **Rulings registradas durante a execução da Fase 1** (decisões tomadas ao
-> vivo, via TDD, quando a realidade do runtime divergiu do plano original):
+> **Rulings registradas durante a execução (decisões tomadas ao vivo, via
+> TDD, quando a realidade do runtime divergiu do plano original):**
 > 1. `getHttpServer()` não pode devolver o `TemplatedApp` cru — precisa de um
 >    shim `EventEmitter`-based, senão `app.listen()` quebra para todo mundo,
 >    não só para quem usa Socket.IO. Ver §1, item 1, e §4.2.
@@ -27,6 +27,24 @@
 >    (`registerRouterHooks`/`registerParserMiddleware`), mesmo para uma
 >    aplicação vazia. Implementados já na Fase 1 para o ciclo de vida básico
 >    (`app.init()`) funcionar. Ver §4 (revisado).
+> 3. `hyper-express` avança middlewares `async` automaticamente — chamar
+>    `next()` manualmente dentro de uma delas causa
+>    `ERR_DOUBLE_MIDDLEWARE_EXEUCTION_DETECTED`. `Route.handle()`
+>    (`node_modules/hyper-express/src/components/router/Route.js`) detecta
+>    `handler.constructor.name === 'AsyncFunction'` e, nesse caso, faz
+>    `await handler(request, response, iterator); iterator();` — chama o
+>    `next` interno automaticamente após o `await`, **mesmo que o handler já
+>    o tenha chamado**. Como o padrão idiomático de middleware do
+>    Nest/Express é sempre chamar `next()` explicitamente, qualquer
+>    middleware `async` registrada verbatim (o body-parser da Fase 3
+>    incluído) dispara um "avanço duplo" e a requisição falha com 500.
+>    **Solução:** todo middleware repassada a `use()`/`registerParserMiddleware()`
+>    passa por `toHyperExpressMiddleware()` (`src/utils/middleware.util.ts`),
+>    que a envolve numa função propositalmente **não-`async`** (assim
+>    hyper-express sempre usa o branch síncrono e nunca auto-avança) e
+>    resolve o avanço de forma idempotente na primeira vez que a middleware
+>    original chama `next()` — síncrono, dentro de uma Promise resolvida, ou
+>    via rejeição/throw não tratado. Ver §5.3 e §6.5 (revisados).
 
 ---
 

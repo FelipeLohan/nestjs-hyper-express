@@ -1,8 +1,9 @@
 import { AbstractHttpAdapter } from '@nestjs/core';
-import type {
-  NestApplicationOptions,
-  RequestMethod,
-  VersioningOptions,
+import {
+  StreamableFile,
+  type NestApplicationOptions,
+  type RequestMethod,
+  type VersioningOptions,
 } from '@nestjs/common';
 import type { VersionValue } from '@nestjs/common/internal';
 import * as HyperExpress from 'hyper-express';
@@ -11,8 +12,20 @@ import {
   createJsonBodyParser,
   createUrlencodedBodyParser,
 } from '../utils/body-parser.util';
+import { toHyperExpressMiddleware } from '../utils/middleware.util';
 import { noopNext } from '../utils/noop-next.util';
+import { toHyperExpressRouteHandler } from '../utils/route-handler.util';
 import { HyperExpressHttpServer } from './hyper-express-http-server';
+
+type NestRouteHandler = Parameters<typeof toHyperExpressRouteHandler>[0];
+type RouteVerb =
+  | 'get'
+  | 'post'
+  | 'put'
+  | 'delete'
+  | 'patch'
+  | 'head'
+  | 'options';
 
 type NestNotFoundProxy = (
   req: HyperExpress.Request,
@@ -107,9 +120,67 @@ export class HyperExpressAdapter extends AbstractHttpAdapter<
     this.httpServer.markClosed();
   }
 
-  // --- Stubs for the remaining AbstractHttpAdapter abstract members. ---
-  // Each is implemented with its own TDD cycle in Fase 2/3 of PLAN.md;
-  // until then they fail loudly instead of silently misbehaving.
+  // --- Fase 2: Roteamento ---
+
+  private routeMethod(method: RouteVerb, ...args: unknown[]): HyperExpress.Server {
+    const path = args[0] as string;
+    const nestHandler = args[args.length - 1] as NestRouteHandler;
+    const middlewares = args.slice(1, -1) as HyperExpress.MiddlewareHandler[];
+    return (
+      this.instance[method] as (
+        ...routeArgs: unknown[]
+      ) => HyperExpress.Server
+    )(path, ...middlewares, toHyperExpressRouteHandler(nestHandler));
+  }
+
+  public get(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('get', ...args);
+  }
+
+  public post(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('post', ...args);
+  }
+
+  public put(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('put', ...args);
+  }
+
+  public delete(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('delete', ...args);
+  }
+
+  public patch(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('patch', ...args);
+  }
+
+  public head(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('head', ...args);
+  }
+
+  public options(...args: unknown[]): HyperExpress.Server {
+    return this.routeMethod('options', ...args);
+  }
+
+  public all(...args: unknown[]): HyperExpress.Server {
+    const path = args[0] as string;
+    const nestHandler = args[args.length - 1] as NestRouteHandler;
+    return this.instance.any(path, toHyperExpressRouteHandler(nestHandler));
+  }
+
+  public use(...args: unknown[]): HyperExpress.Server {
+    const wrappedArgs = args.map((arg) =>
+      typeof arg === 'function'
+        ? toHyperExpressMiddleware(
+            arg as Parameters<typeof toHyperExpressMiddleware>[0],
+          )
+        : arg,
+    );
+    return (
+      this.instance.use as (...useArgs: unknown[]) => HyperExpress.Server
+    )(...wrappedArgs);
+  }
+
+  // --- Fase 3: Tradução de Request/Response ---
 
   public useStaticAssets(..._args: unknown[]): never {
     return notImplemented('useStaticAssets', 'Fase 3 (ver PLAN.md §6.6)');
@@ -119,35 +190,76 @@ export class HyperExpressAdapter extends AbstractHttpAdapter<
     return notImplemented('setViewEngine', 'Fase 3 (ver PLAN.md §6.6)');
   }
 
-  public getRequestHostname(_request: HyperExpress.Request): string {
-    return notImplemented('getRequestHostname', 'Fase 3');
+  public getRequestHostname(request: HyperExpress.Request): string {
+    return request.hostname;
   }
 
-  public getRequestMethod(_request: HyperExpress.Request): string {
-    return notImplemented('getRequestMethod', 'Fase 3');
+  public getRequestMethod(request: HyperExpress.Request): string {
+    return request.method;
   }
 
-  public getRequestUrl(_request: HyperExpress.Request): string {
-    return notImplemented('getRequestUrl', 'Fase 3');
+  public getRequestUrl(request: HyperExpress.Request): string {
+    return request.originalUrl;
   }
 
   public status(
-    _response: HyperExpress.Response,
-    _statusCode: number,
-  ): unknown {
-    return notImplemented('status', 'Fase 3');
+    response: HyperExpress.Response,
+    statusCode: number,
+  ): HyperExpress.Response {
+    return response.status(statusCode);
   }
 
   public reply(
-    _response: HyperExpress.Response,
-    _body: unknown,
-    _statusCode?: number,
-  ): unknown {
-    return notImplemented('reply', 'Fase 3');
+    response: HyperExpress.Response,
+    body: unknown,
+    statusCode?: number,
+  ): void {
+    if (statusCode !== undefined) {
+      response.status(statusCode);
+    }
+    if (body === undefined || body === null) {
+      response.send();
+      return;
+    }
+    if (body instanceof StreamableFile) {
+      this.applyStreamHeaders(response, body);
+      void response.stream(body.getStream());
+      return;
+    }
+    if (typeof body === 'object' || typeof body === 'boolean' || typeof body === 'number') {
+      response.json(body);
+      return;
+    }
+    response.send(String(body));
   }
 
-  public end(_response: HyperExpress.Response, _message?: string): unknown {
-    return notImplemented('end', 'Fase 3');
+  private applyStreamHeaders(
+    response: HyperExpress.Response,
+    streamable: StreamableFile,
+  ): void {
+    const headers = streamable.getHeaders();
+    if (
+      response.getHeader('Content-Type') === undefined &&
+      headers.type !== undefined
+    ) {
+      response.setHeader('Content-Type', headers.type);
+    }
+    if (
+      response.getHeader('Content-Disposition') === undefined &&
+      headers.disposition !== undefined
+    ) {
+      response.setHeader('Content-Disposition', headers.disposition);
+    }
+    if (
+      response.getHeader('Content-Length') === undefined &&
+      headers.length !== undefined
+    ) {
+      response.setHeader('Content-Length', String(headers.length));
+    }
+  }
+
+  public end(response: HyperExpress.Response, message?: string): HyperExpress.Response {
+    return response.send(message);
   }
 
   public render(
@@ -159,11 +271,12 @@ export class HyperExpressAdapter extends AbstractHttpAdapter<
   }
 
   public redirect(
-    _response: HyperExpress.Response,
-    _statusCode: number,
-    _url: string,
-  ): unknown {
-    return notImplemented('redirect', 'Fase 3');
+    response: HyperExpress.Response,
+    statusCode: number,
+    url: string,
+  ): HyperExpress.Response | false {
+    response.status(statusCode);
+    return response.redirect(url);
   }
 
   public setErrorHandler(handler: Function, _prefix?: string): void {
@@ -180,34 +293,37 @@ export class HyperExpressAdapter extends AbstractHttpAdapter<
     );
   }
 
-  public isHeadersSent(_response: HyperExpress.Response): boolean {
-    return notImplemented('isHeadersSent', 'Fase 3');
+  public isHeadersSent(response: HyperExpress.Response): boolean {
+    return response.headersSent;
   }
 
-  public getHeader(_response: HyperExpress.Response, _name: string): unknown {
-    return notImplemented('getHeader', 'Fase 3');
+  public getHeader(
+    response: HyperExpress.Response,
+    name: string,
+  ): string | string[] | void {
+    return response.getHeader(name);
   }
 
   public setHeader(
-    _response: HyperExpress.Response,
-    _name: string,
-    _value: string,
-  ): unknown {
-    return notImplemented('setHeader', 'Fase 3');
+    response: HyperExpress.Response,
+    name: string,
+    value: string,
+  ): HyperExpress.Response {
+    return response.setHeader(name, value);
   }
 
   public appendHeader(
-    _response: HyperExpress.Response,
-    _name: string,
-    _value: string,
-  ): unknown {
-    return notImplemented('appendHeader', 'Fase 3');
+    response: HyperExpress.Response,
+    name: string,
+    value: string,
+  ): HyperExpress.Response {
+    return response.append(name, value);
   }
 
   public registerParserMiddleware(_prefix?: string, rawBody?: boolean): void {
     if (this.isParserRegistered) return;
-    this.instance.use(createJsonBodyParser(!!rawBody));
-    this.instance.use(createUrlencodedBodyParser());
+    this.use(createJsonBodyParser(!!rawBody));
+    this.use(createUrlencodedBodyParser());
     this.isParserRegistered = true;
   }
 

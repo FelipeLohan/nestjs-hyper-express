@@ -2,7 +2,7 @@
   "name": "nestjs-hyper-express",
   "version": "0.1.0",
   "description": "Hyper-Express adapter for NestJS",
-  "author": "Felipe Lohan Farias dos Santos",
+  "author": "FelipeLohan",
   "license": "MIT",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
